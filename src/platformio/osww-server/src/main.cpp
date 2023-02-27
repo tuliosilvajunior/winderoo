@@ -1,15 +1,18 @@
 #include <Arduino.h>
-#include <WiFiManager.h>
-#include <LittleFS.h>
-#include <ArduinoJson.h>
-#include <HTTPClient.h>
 #include <ESPmDNS.h>
+#include <LittleFS.h>
 #include <ESP32Time.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <WiFiManager.h>
 
 #include "./utils/LedControl.h"
 #include "./utils/MotorControl.h"
 
 #include "FS.h"
+#include "RMaker.h"
+#include "WiFi.h"
+#include "WiFiProv.h"
 #include "ESPAsyncWebServer.h"
 
 /*
@@ -40,6 +43,8 @@ int externalButton = 13;
  */
 String timeURL = "http://worldtimeapi.org/api/ip";
 String settingsFile = "/settings.txt";
+const char *service_name = "Winderoo Setup";
+const char *pop = "winderoo";
 unsigned long rtc_offset;
 unsigned long rtc_epoch;
 unsigned long estimatedRoutineFinishEpoch;
@@ -70,6 +75,8 @@ HTTPClient http;
 WiFiClient client;
 ESP32Time rtc;
 
+static Device Winderoo("Winderoo", "custom.device.winder");
+
 /**
  * Calclates the duration and estimated finish time of the winding routine
  *
@@ -86,34 +93,12 @@ unsigned long calculateWindingTime()
 	long totalRestDuration = totalNumberOfRestingPeriods * 180;
 	long finalRoutineDuration = totalRestDuration + totalSecondsSpentTurning;
 
-	Serial.print("[STATUS] - Total winding duration: ");
-	Serial.println(finalRoutineDuration);
+
 
 	unsigned long epoch = rtc.getEpoch();
 	unsigned long estimatedFinishTime = epoch + finalRoutineDuration;
 
 	return estimatedFinishTime;
-}
-
-/**
- * Sets running conditions to TRUE & calculates winding time parameters
- */
-void beginWindingRoutine()
-{
-	startTimeEpoch = rtc.getEpoch();
-	previousEpoch = startTimeEpoch;
-	routineRunning = true;
-	userDefinedSettings.status = "Winding";
-	Serial.println("[STATUS] - Begin winding routine");
-
-	unsigned long finishTime = calculateWindingTime();
-	estimatedRoutineFinishEpoch = finishTime;
-
-	Serial.print("[STATUS] - Current time: ");
-	Serial.println(rtc.getEpoch());
-
-	Serial.print("[STATUS] - Estimated finish time: ");
-	Serial.println(finishTime);
 }
 
 /**
@@ -138,6 +123,73 @@ void getTime()
 	http.end();
 }
 
+
+/**
+ * Sets running conditions to TRUE & calculates winding time parameters
+ */
+void beginWindingRoutine()
+{
+	startTimeEpoch = rtc.getEpoch();
+	previousEpoch = startTimeEpoch;
+	routineRunning = true;
+	userDefinedSettings.status = "Winding";
+
+
+	unsigned long finishTime = calculateWindingTime();
+	estimatedRoutineFinishEpoch = finishTime;
+}
+
+/**
+ * Rainmaker request handler. This is a similar behaviou to the POST /update endpoint.
+ */
+void write_callback(Device *device, Param *param, const param_val_t val, void *priv_data, write_ctx_t *ctx) {
+	const char *device_name = device->getDeviceName();
+	const char *param_name = param->getParamName();
+
+	if(strcmp(param_name, "tpd") == 0) {
+		int speed = val.val.i;
+		
+		std::string ss = std::to_string(speed);
+        userDefinedSettings.rotationsPerDay = ss.c_str();
+        param->updateAndReport(val);
+	}
+
+	if(strcmp(param_name, "rotationDirection") == 0) {
+		const char* dMode = val.val.s;
+
+		userDefinedSettings.direction = dMode;
+
+		motor.stop();
+		delay(250);
+
+		// Update motor direction
+		if (userDefinedSettings.direction == "CW" ) {
+			motor.setMotorDirection(1);
+		} else if (userDefinedSettings.direction == "CCW") {
+			motor.setMotorDirection(0);
+		}
+
+        param->updateAndReport(val);
+	}
+
+	if (strcmp(param_name, "Control") == 0) {
+        bool controlStartStop = val.val.b;
+        
+		if (controlStartStop) {
+            if (!routineRunning) {
+              userDefinedSettings.status = "Winding";
+              beginWindingRoutine();
+            }
+          } else {
+            motor.stop();
+            routineRunning = false;
+            userDefinedSettings.status = "Stopped";
+          }
+
+        param->updateAndReport(val);
+	}
+}
+
 /**
  * Loads user defined settings from data file
  *
@@ -152,7 +204,6 @@ String loadConfigVarsFromFile(String file_name)
 
 	if (!this_file)
 	{
-		Serial.println("[STATUS] - Failed to open configuration file, returning empty result");
 		return result;
 	}
 	while (this_file.available())
@@ -177,7 +228,6 @@ bool writeConfigVarsToFile(String file_name, String contents)
 
 	if (!this_file)
 	{
-		Serial.println("[STATUS] - Failed to open configuration file");
 		return false;
 	}
 
@@ -185,7 +235,6 @@ bool writeConfigVarsToFile(String file_name, String contents)
 
 	if (bytesWritten == 0)
 	{
-		Serial.println("[STATUS] - Failed to write to configuration file");
 		return false;
 	}
 
@@ -233,7 +282,7 @@ void notFound(AsyncWebServerRequest *request)
 }
 
 /**
- * API for front end
+ * API for front end interaction
  */
 void startWebserver()
 {
@@ -272,7 +321,6 @@ void startWebserver()
           userDefinedSettings.winderEnabled = p->value().c_str();
 
           if (userDefinedSettings.winderEnabled == "0") {
-            Serial.println("[STATUS] - Switched off!");
             userDefinedSettings.status = "Stopped";
             routineRunning = false;
             motor.stop();
@@ -301,8 +349,6 @@ void startWebserver()
           } else if (userDefinedSettings.direction == "CCW") {
             motor.setMotorDirection(0);
           }
-
-          Serial.println("[STATUS] - direction set: " + userDefinedSettings.direction);
         }
     
         if( strcmp(p->name().c_str(), "tpd") == 0 ) {
@@ -354,7 +400,6 @@ void startWebserver()
 
 	server.on("/api/reset", HTTP_GET, [](AsyncWebServerRequest *request)
 			  {
-		Serial.println("[STATUS] - Received reset command");
 		AsyncResponseStream *response = request->beginResponseStream("application/json");
 		DynamicJsonDocument json(1024);
 		json["status"] = "Resetting";
@@ -385,7 +430,6 @@ void initFS()
 	{
 		Serial.println("[STATUS] - An error has occurred while mounting LittleFS");
 	}
-	Serial.println("[STATUS] - LittleFS mounted");
 }
 
 /**
@@ -411,10 +455,65 @@ void triggerLEDCondition(int blinkState)
 		LED.pwm();
 		break;
 	default:
-		Serial.println("[WARN] - blinkState not recognized");
 		break;
 	}
 }
+
+
+void sysProvEvent(arduino_event_t *sys_event)
+{
+  switch (sys_event->event_id) {
+    case ARDUINO_EVENT_PROV_START:
+// #if CONFIG_IDF_TARGET_ESP32
+//       Serial.printf("\nProvisioning Started with name \"%s\" and PoP \"%s\" on BLE\n", service_name, pop);
+//       printQR(service_name, pop, "ble");
+// #else
+      Serial.printf("\nProvisioning Started with name \"%s\" and PoP \"%s\" on SoftAP\n", service_name, pop);
+      printQR(service_name, pop, "softap");
+// #endif
+      break;
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      Serial.printf("\nConnected to Wi-Fi!\n");
+      break;
+  }
+}
+
+/**
+ * Handles Rainmaker initialization and service availability for UI
+ */
+// void initializeRainmaker() {
+// 	// Expose functionality & define interface types for Rainmaker UI
+// 	Param rpdParam("Rotations Per Day", ESP_RMAKER_PARAM_RANGE, value((int)userDefinedSettings.rotationsPerDay.toInt()), PROP_FLAG_READ | PROP_FLAG_WRITE);
+// 	rpdParam.addUIType(ESP_RMAKER_UI_SLIDER);
+// 	// rpdParam.addBounds(value(100), value(userDefinedSettings.rotationsPerDay.toInt()), value(960));
+// 	rpdParam.addBounds(value(100), value(480), value(960));
+// 	Winderoo.addParam(rpdParam);
+
+// 	const char* directionalModes[] = { "CW", "BOTH", "CCW" };
+// 	Param modeDirection("Direction", "custom.param.direction", value((char*)userDefinedSettings.direction.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
+// 	modeDirection.addValidStrList(directionalModes, 3);
+// 	modeDirection.addUIType(ESP_RMAKER_UI_DROPDOWN);
+// 	Winderoo.addParam(modeDirection);
+
+// 	Param toggleStartStop("Control", "custom.param.toggle", value((char*)userDefinedSettings.status.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
+// 	toggleStartStop.addUIType(ESP_RMAKER_UI_TOGGLE);
+// 	// Winderoo.assignPrimaryParam("Control");
+
+// 	Winderoo.addCb(write_callback);
+// 	winder_node.addDevice(Winderoo);
+
+// 	RMaker.enableSchedule();
+//     RMaker.enableScenes();
+//     RMaker.start();
+
+//     WiFi.onEvent(sysProvEvent);
+	
+// 	#if CONFIG_IDF_TARGET_ESP32
+// 		WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE, WIFI_PROV_SCHEME_HANDLER_FREE_BTDM, WIFI_PROV_SECURITY_1, pop, service_name);
+// 	#else
+// 		WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_1, pop, service_name);
+// 	#endif
+// }
 
 /**
  * Callback triggered from WifiManager when successfully connected to new WiFi network
@@ -429,9 +528,9 @@ void saveWifiCallback()
 
 void setup()
 {
-	WiFi.mode(WIFI_STA);
+	// WiFi.mode(WIFI_STA);
 	Serial.begin(115200);
-	setCpuFrequencyMhz(80);
+	// setCpuFrequencyMhz(80);
 
 	// Prepare pins
 	pinMode(directionalPinA, OUTPUT);
@@ -451,35 +550,62 @@ void setup()
 
 	// Connect using saved credentials, if they exist
 	// If connection fails, start setup Access Point
-	if (wm.autoConnect("Winderoo Setup"))
-	{
+	// if (wm.autoConnect("Winderoo Setup"))
+	// {
 		initFS();
-		Serial.println("[STATUS] - connected to saved network");
 
 		// retrieve & read saved settings
 		String savedSettings = loadConfigVarsFromFile(settingsFile);
 		parseSettings(savedSettings);
 
-		if (!MDNS.begin("winderoo"))
-		{
-			Serial.println("[STATUS] - Failed to start mDNS");
-		}
-		MDNS.addService("_winderoo", "_tcp", 80);
-		Serial.println("[STATUS] - mDNS started");
-
-		getTime();
-		startWebserver();
+		MDNS.begin("winderoo");
+		// MDNS.addService("_winderoo", "_tcp", 80);
 
 		if (strcmp(userDefinedSettings.status.c_str(), "Winding") == 0)
 		{
 			beginWindingRoutine();
 		}
-	}
-	else
-	{
-		Serial.println("[STATUS] - WiFi Config Portal running");
-		ledcWrite(LED.getChannel(), 255);
-	};
+
+		Node winder_node = RMaker.initNode("Winderoo Device");
+		// Expose functionality & define interface types for Rainmaker UI
+		Param rpdParam("Rotations Per Day", ESP_RMAKER_PARAM_RANGE, value((int)userDefinedSettings.rotationsPerDay.toInt()), PROP_FLAG_READ | PROP_FLAG_WRITE);
+		rpdParam.addUIType(ESP_RMAKER_UI_SLIDER);
+		rpdParam.addBounds(value(100), value((int)userDefinedSettings.rotationsPerDay.toInt()), value(960));
+		Winderoo.addParam(rpdParam);
+
+		const char* directionalModes[] = { "CW", "BOTH", "CCW" };
+		Param modeDirection("Direction", "custom.param.direction", value((char*)userDefinedSettings.direction.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
+		modeDirection.addValidStrList(directionalModes, 3);
+		modeDirection.addUIType(ESP_RMAKER_UI_DROPDOWN);
+		Winderoo.addParam(modeDirection);
+
+		Param toggleStartStop("Control", "custom.param.toggle", value((char*)userDefinedSettings.status.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
+		toggleStartStop.addUIType(ESP_RMAKER_UI_TOGGLE);
+		// Winderoo.assignPrimaryParam("Control");
+
+		Winderoo.addCb(write_callback);
+		winder_node.addDevice(Winderoo);
+
+		RMaker.enableSchedule();
+		RMaker.enableScenes();
+		RMaker.start();
+
+		WiFi.onEvent(sysProvEvent);
+
+	
+// #if CONFIG_IDF_TARGET_ESP32
+// 	WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE, WIFI_PROV_SCHEME_HANDLER_FREE_BTDM, WIFI_PROV_SECURITY_1, pop, service_name);
+// #else
+	WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_1, pop, service_name);
+// #endif
+		// getTime();
+		startWebserver();
+
+	// }
+	// else
+	// {
+	// 	ledcWrite(LED.getChannel(), 255);
+	// };
 }
 
 void loop()
@@ -490,16 +616,12 @@ void loop()
 		// fast blink
 		triggerLEDCondition(2);
 
-		Serial.println("[STATUS] - Stopping webserver");
 		server.end();
 		delay(600);
-		Serial.println("[STATUS] - Stopping File System");
 		LittleFS.end();
 		delay(200);
-		Serial.println("[STATUS] - Resetting Wifi Manager settings");
 		wm.resetSettings();
 		delay(200);
-		Serial.println("[STATUS] - Restart device...");
 		ESP.restart();
 		delay(2000);
 	}
@@ -537,14 +659,11 @@ void loop()
 
 					int currentDirection = motor.getMotorDirection();
 					motor.setMotorDirection(!currentDirection);
-					Serial.println("[STATUS] - Motor changing direction, mode: " + userDefinedSettings.direction);
-
 					motor.determineMotorDirectionAndBegin();
 				}
 
 				if ((currentTime - previousEpoch) > 180)
 				{
-					Serial.println("[STATUS] - Pause");
 					previousEpoch = currentTime;
 					motor.stop();
 					delay(3000);
@@ -567,7 +686,6 @@ void loop()
 	{
 		if (userDefinedSettings.winderEnabled == "0")
 		{
-			Serial.println("[STATUS] - Switched off!");
 			userDefinedSettings.status = "Stopped";
 			routineRunning = false;
 			motor.stop();
