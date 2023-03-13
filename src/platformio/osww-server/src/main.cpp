@@ -4,19 +4,18 @@
 #include <ESP32Time.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include <WiFiManager.h>
+#include <Adafruit_NeoPixel.h>
 #include <wifi_provisioning/manager.h>
 
 #include "./utils/LedControl.h"
 #include "./utils/MotorControl.h"
 
 #include "FS.h"
-// #include "WiFi.h"
-#include <WiFiClientSecure.h>
+#include "WiFi.h"
+#include <WiFiClient.h>
 #include "RMaker.h"
 #include "WiFiProv.h"
-#include "SimpleBLE.h"
-// #include "ESPAsyncWebServer.h"
+#include "ESPAsyncWebServer.h"
 
 /*
  * *************************************************************************************
@@ -70,16 +69,15 @@ struct RUNTIME_VARS
  * DO NOT CHANGE THESE VARIABLES!
  */
 RUNTIME_VARS userDefinedSettings;
-LedControl LED(ledPin);
+// LedControl LED(ledPin);
 MotorControl motor(directionalPinA, directionalPinB);
-// WiFiManager wm;
-// AsyncWebServer server(80);
+AsyncWebServer server(80);
 HTTPClient http;
-WiFiClientSecure client;
+WiFiClient client;
 ESP32Time rtc;
 
-static Device Winderoo("Winderoo", "custom.device.winder");
-SimpleBLE ble;
+// static Device Winderoo("Winderoo", "custom.device.winder");
+static Fan Winderoo("Winderoo");
 
 /**
  * Calclates the duration and estimated finish time of the winding routine
@@ -150,6 +148,14 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
 	const char *device_name = device->getDeviceName();
 	const char *param_name = param->getParamName();
 
+
+	Serial.print("param: ");
+	Serial.println(param_name);
+	// Serial.print("val: ");
+	// Serial.printf(val);
+	// Serial.println(" ");
+
+
 	if(strcmp(param_name, "tpd") == 0) {
 		int speed = val.val.i;
 		
@@ -181,10 +187,12 @@ void write_callback(Device *device, Param *param, const param_val_t val, void *p
         
 		if (controlStartStop) {
             if (!routineRunning) {
+			  Serial.println("reporting start winding");
               userDefinedSettings.status = "Winding";
               beginWindingRoutine();
             }
           } else {
+			Serial.println("reporting stop");
             motor.stop();
             routineRunning = false;
             userDefinedSettings.status = "Stopped";
@@ -271,159 +279,159 @@ void parseSettings(String settings)
 /**
  * 404 handler for webserver
  */
-// void notFound(AsyncWebServerRequest *request)
-// {
-// 	// Handle HTTP_OPTIONS requests
-// 	if (request->method() == 64)
-// 	{
-// 		AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", "Ok");
-// 		request->send(response);
-// 	}
-// 	else
-// 	{
-// 		request->send(404, "text/plain", "Winderoo\n\n404 - Resource Not found");
-// 	}
-// }
+void notFound(AsyncWebServerRequest *request)
+{
+	// Handle HTTP_OPTIONS requests
+	if (request->method() == 64)
+	{
+		AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", "Ok");
+		request->send(response);
+	}
+	else
+	{
+		request->send(404, "text/plain", "Winderoo\n\n404 - Resource Not found");
+	}
+}
 
 /**
  * API for front end interaction
  */
-// void startWebserver()
-// {
+void startWebserver()
+{
 
-// 	server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request)
-// 			  {
-//     AsyncResponseStream *response = request->beginResponseStream("application/json");
-//     DynamicJsonDocument json(1024);
-//     json["status"] = userDefinedSettings.status;
-//     json["rotationsPerDay"] = userDefinedSettings.rotationsPerDay;
-//     json["direction"] = userDefinedSettings.direction;
-//     json["hour"] = userDefinedSettings.hour;
-//     json["minutes"] = userDefinedSettings.minutes;
-//     json["durationInSecondsToCompleteOneRevolution"] = durationInSecondsToCompleteOneRevolution;
-//     json["startTimeEpoch"] = startTimeEpoch;
-//     json["currentTimeEpoch"] = rtc.getEpoch();
-//     json["estimatedRoutineFinishEpoch"] = estimatedRoutineFinishEpoch;
-//     json["winderEnabled"] = userDefinedSettings.winderEnabled;
-//     json["timerEnabled"] = userDefinedSettings.timerEnabled;
-//     json["db"] = WiFi.RSSI();
-//     serializeJson(json, *response);
+	server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request)
+			  {
+    AsyncResponseStream *response = request->beginResponseStream("application/json");
+    DynamicJsonDocument json(1024);
+    json["status"] = userDefinedSettings.status;
+    json["rotationsPerDay"] = userDefinedSettings.rotationsPerDay;
+    json["direction"] = userDefinedSettings.direction;
+    json["hour"] = userDefinedSettings.hour;
+    json["minutes"] = userDefinedSettings.minutes;
+    json["durationInSecondsToCompleteOneRevolution"] = durationInSecondsToCompleteOneRevolution;
+    json["startTimeEpoch"] = startTimeEpoch;
+    json["currentTimeEpoch"] = rtc.getEpoch();
+    json["estimatedRoutineFinishEpoch"] = estimatedRoutineFinishEpoch;
+    json["winderEnabled"] = userDefinedSettings.winderEnabled;
+    json["timerEnabled"] = userDefinedSettings.timerEnabled;
+    json["db"] = WiFi.RSSI();
+    serializeJson(json, *response);
 
-//     request->send(response);
+    request->send(response);
 
-//     // Update RTC time ref
-//     getTime(); });
+    // Update RTC time ref
+    getTime(); });
 
-// 	server.on("/api/power", HTTP_POST, [](AsyncWebServerRequest *request)
-// 			  {
-//     int params = request->params();
+	server.on("/api/power", HTTP_POST, [](AsyncWebServerRequest *request)
+			  {
+    int params = request->params();
     
-//     for ( int i = 0; i < params; i++ ) {
-//       AsyncWebParameter* p = request->getParam(i);
+    for ( int i = 0; i < params; i++ ) {
+      AsyncWebParameter* p = request->getParam(i);
 
-//         if( strcmp(p->name().c_str(), "winderEnabled") == 0 ) {
-//           userDefinedSettings.winderEnabled = p->value().c_str();
+        if( strcmp(p->name().c_str(), "winderEnabled") == 0 ) {
+          userDefinedSettings.winderEnabled = p->value().c_str();
 
-//           if (userDefinedSettings.winderEnabled == "0") {
-//             userDefinedSettings.status = "Stopped";
-//             routineRunning = false;
-//             motor.stop();
-//           }
-//         }
-//     }
+          if (userDefinedSettings.winderEnabled == "0") {
+            userDefinedSettings.status = "Stopped";
+            routineRunning = false;
+            motor.stop();
+          }
+        }
+    }
     
-//     request->send(204); });
+    request->send(204); });
 
-// 	server.on("/api/update", HTTP_POST, [](AsyncWebServerRequest *request)
-// 			  {
-//     int params = request->params();
+	server.on("/api/update", HTTP_POST, [](AsyncWebServerRequest *request)
+			  {
+    int params = request->params();
     
-//     for ( int i = 0; i < params; i++ ) {
-//       AsyncWebParameter* p = request->getParam(i);
+    for ( int i = 0; i < params; i++ ) {
+      AsyncWebParameter* p = request->getParam(i);
     
-//         if( strcmp(p->name().c_str(), "rotationDirection") == 0 ) {
-//           userDefinedSettings.direction = p->value().c_str();
+        if( strcmp(p->name().c_str(), "rotationDirection") == 0 ) {
+          userDefinedSettings.direction = p->value().c_str();
 
-//           motor.stop();
-//           delay(250);
+          motor.stop();
+          delay(250);
 
-//           // Update motor direction
-//           if (userDefinedSettings.direction == "CW" ) {
-//             motor.setMotorDirection(1);
-//           } else if (userDefinedSettings.direction == "CCW") {
-//             motor.setMotorDirection(0);
-//           }
-//         }
+          // Update motor direction
+          if (userDefinedSettings.direction == "CW" ) {
+            motor.setMotorDirection(1);
+          } else if (userDefinedSettings.direction == "CCW") {
+            motor.setMotorDirection(0);
+          }
+        }
     
-//         if( strcmp(p->name().c_str(), "tpd") == 0 ) {
-//           const char* newTpd = p->value().c_str();
+        if( strcmp(p->name().c_str(), "tpd") == 0 ) {
+          const char* newTpd = p->value().c_str();
 
-//           if (strcmp(newTpd, userDefinedSettings.rotationsPerDay.c_str()) != 0) {
-//             userDefinedSettings.rotationsPerDay = p->value().c_str();
+          if (strcmp(newTpd, userDefinedSettings.rotationsPerDay.c_str()) != 0) {
+            userDefinedSettings.rotationsPerDay = p->value().c_str();
 
-//             unsigned long finishTime = calculateWindingTime();
-//             estimatedRoutineFinishEpoch = finishTime;
-//           }
-//         }
+            unsigned long finishTime = calculateWindingTime();
+            estimatedRoutineFinishEpoch = finishTime;
+          }
+        }
 
-//         if( strcmp(p->name().c_str(), "hour") == 0 ) {
-//           userDefinedSettings.hour = p->value().c_str();
-//         }
+        if( strcmp(p->name().c_str(), "hour") == 0 ) {
+          userDefinedSettings.hour = p->value().c_str();
+        }
 		
-// 		if( strcmp(p->name().c_str(), "timerEnabled") == 0 ) {
-//           userDefinedSettings.timerEnabled = p->value().c_str();
-// 		}
+		if( strcmp(p->name().c_str(), "timerEnabled") == 0 ) {
+          userDefinedSettings.timerEnabled = p->value().c_str();
+		}
 
-//         if( strcmp(p->name().c_str(), "minutes") == 0 ) {
-//           userDefinedSettings.minutes = p->value().c_str();
-//         }
+        if( strcmp(p->name().c_str(), "minutes") == 0 ) {
+          userDefinedSettings.minutes = p->value().c_str();
+        }
 
-//         if( strcmp(p->name().c_str(), "action") == 0) {
-//           if ( strcmp(p->value().c_str(), "START") == 0 ) {
-//             if (!routineRunning) {
-//               userDefinedSettings.status = "Winding";
-//               beginWindingRoutine();
-//             }
-//           } else {
-//             motor.stop();
-//             routineRunning = false;
-//             userDefinedSettings.status = "Stopped";
-//           }
-//         }
-//     }
+        if( strcmp(p->name().c_str(), "action") == 0) {
+          if ( strcmp(p->value().c_str(), "START") == 0 ) {
+            if (!routineRunning) {
+              userDefinedSettings.status = "Winding";
+              beginWindingRoutine();
+            }
+          } else {
+            motor.stop();
+            routineRunning = false;
+            userDefinedSettings.status = "Stopped";
+          }
+        }
+    }
 
-//     String configs = userDefinedSettings.status + "," + userDefinedSettings.rotationsPerDay + "," + userDefinedSettings.hour + "," + userDefinedSettings.minutes + "," +  userDefinedSettings.timerEnabled + "," + userDefinedSettings.direction;
+    String configs = userDefinedSettings.status + "," + userDefinedSettings.rotationsPerDay + "," + userDefinedSettings.hour + "," + userDefinedSettings.minutes + "," +  userDefinedSettings.timerEnabled + "," + userDefinedSettings.direction;
 
-//     bool writeSuccess = writeConfigVarsToFile(settingsFile, configs);
+    bool writeSuccess = writeConfigVarsToFile(settingsFile, configs);
 
-//     if ( !writeSuccess ) {
-//       request->send(500);
-//     }
+    if ( !writeSuccess ) {
+      request->send(500);
+    }
 
-//     request->send(204); });
+    request->send(204); });
 
-// 	server.on("/api/reset", HTTP_GET, [](AsyncWebServerRequest *request)
-// 			  {
-// 		AsyncResponseStream *response = request->beginResponseStream("application/json");
-// 		DynamicJsonDocument json(1024);
-// 		json["status"] = "Resetting";
-// 		serializeJson(json, *response);
-// 		request->send(response);
+	server.on("/api/reset", HTTP_GET, [](AsyncWebServerRequest *request)
+			  {
+		AsyncResponseStream *response = request->beginResponseStream("application/json");
+		DynamicJsonDocument json(1024);
+		json["status"] = "Resetting";
+		serializeJson(json, *response);
+		request->send(response);
 		
-// 		reset = true; });
+		reset = true; });
 
-// 	server.serveStatic("/css/", LittleFS, "/css/").setCacheControl("max-age=31536000");
-// 	server.serveStatic("/js/", LittleFS, "/js/").setCacheControl("max-age=31536000");
-// 	server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+	server.serveStatic("/css/", LittleFS, "/css/").setCacheControl("max-age=31536000");
+	server.serveStatic("/js/", LittleFS, "/js/").setCacheControl("max-age=31536000");
+	server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
-// 	server.onNotFound(notFound);
+	server.onNotFound(notFound);
 
-// 	DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
-// 	DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-// 	DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+	DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+	DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+	DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 
-// 	server.begin();
-// }
+	server.begin();
+}
 
 /**
  * Initialize File System
@@ -441,90 +449,45 @@ void initFS()
  *
  * @param blinkState 1 = slow blink, 2 = fast blink, 3 = snooze state
  */
-void triggerLEDCondition(int blinkState)
-{
-	// remove any previous LED state (aka turn LED off)
-	LED.off();
-	delay(50);
+// void triggerLEDCondition(int blinkState)
+// {
+// 	// remove any previous LED state (aka turn LED off)
+// 	LED.off();
+// 	delay(50);
 
-	switch (blinkState)
-	{
-	case 1:
-		LED.slowBlink();
-		break;
-	case 2:
-		LED.fastBlink();
-		break;
-	case 3:
-		LED.pwm();
-		break;
-	default:
-		break;
-	}
-}
+// 	switch (blinkState)
+// 	{
+// 	case 1:
+// 		LED.slowBlink();
+// 		break;
+// 	case 2:
+// 		LED.fastBlink();
+// 		break;
+// 	case 3:
+// 		LED.pwm();
+// 		break;
+// 	default:
+// 		break;
+// 	}
+// }
 
 
 void sysProvEvent(arduino_event_t *sys_event)
 {
-  switch (sys_event->event_id) {
-	case ARDUINO_EVENT_PROV_INIT:
-      wifi_prov_mgr_disable_auto_stop(10000);
-      break;
-    case ARDUINO_EVENT_PROV_CRED_SUCCESS:
-      Serial.println("Stopping Provisioning!!!");
-      wifi_prov_mgr_stop_provisioning();
-      break;
-	case ARDUINO_EVENT_PROV_START:
-		if (CONFIG_IDF_TARGET_ESP32) {
-			Serial.printf("\nProvisioning Started with name \"%s\" and PoP \"%s\" on BLE\n", service_name, pop);
-			printQR(service_name, pop, "ble");
-		} else {
-      		Serial.printf("\nProvisioning Started with name \"%s\" and PoP \"%s\" on SoftAP\n", service_name, pop);
-      		printQR(service_name, pop, "softap");
-		}
-      break;
-    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-      Serial.printf("\nConnected to Wi-Fi!\n");
-      break;
-  }
+    switch (sys_event->event_id) {
+        case ARDUINO_EVENT_PROV_START:
+            Serial.printf("\nProvisioning Started with name \"%s\" and PoP \"%s\" on SoftAP\n", service_name, pop);
+            printQR(service_name, pop, "softap");
+            break;
+        case ARDUINO_EVENT_PROV_INIT:
+            wifi_prov_mgr_disable_auto_stop(10000);
+            break;
+        case ARDUINO_EVENT_PROV_CRED_SUCCESS:
+            wifi_prov_mgr_stop_provisioning();
+            break;
+        default:;
+    }
 }
-
-/**
- * Handles Rainmaker initialization and service availability for UI
- */
-// void initializeRainmaker() {
-// 	// Expose functionality & define interface types for Rainmaker UI
-// 	Param rpdParam("Rotations Per Day", ESP_RMAKER_PARAM_RANGE, value((int)userDefinedSettings.rotationsPerDay.toInt()), PROP_FLAG_READ | PROP_FLAG_WRITE);
-// 	rpdParam.addUIType(ESP_RMAKER_UI_SLIDER);
-// 	// rpdParam.addBounds(value(100), value(userDefinedSettings.rotationsPerDay.toInt()), value(960));
-// 	rpdParam.addBounds(value(100), value(480), value(960));
-// 	Winderoo.addParam(rpdParam);
-
-// 	const char* directionalModes[] = { "CW", "BOTH", "CCW" };
-// 	Param modeDirection("Direction", "custom.param.direction", value((char*)userDefinedSettings.direction.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
-// 	modeDirection.addValidStrList(directionalModes, 3);
-// 	modeDirection.addUIType(ESP_RMAKER_UI_DROPDOWN);
-// 	Winderoo.addParam(modeDirection);
-
-// 	Param toggleStartStop("Control", "custom.param.toggle", value((char*)userDefinedSettings.status.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
-// 	toggleStartStop.addUIType(ESP_RMAKER_UI_TOGGLE);
-// 	// Winderoo.assignPrimaryParam("Control");
-
-// 	Winderoo.addCb(write_callback);
-// 	winder_node.addDevice(Winderoo);
-
-// 	RMaker.enableSchedule();
-//     RMaker.enableScenes();
-//     RMaker.start();
-
-//     WiFi.onEvent(sysProvEvent);
-	
-// 	#if CONFIG_IDF_TARGET_ESP32
-// 		WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE, WIFI_PROV_SCHEME_HANDLER_FREE_BTDM, WIFI_PROV_SECURITY_1, pop, service_name);
-// 	#else
-// 		WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_1, pop, service_name);
-// 	#endif
-// }
 
 /**
  * Callback triggered from WifiManager when successfully connected to new WiFi network
@@ -532,92 +495,55 @@ void sysProvEvent(arduino_event_t *sys_event)
 void saveWifiCallback()
 {
 	// slow blink to confirm connection success
-	triggerLEDCondition(1);
+	// triggerLEDCondition(1);
 	ESP.restart();
 	delay(2000);
 }
 
 void setup()
 {
-	// WiFi.mode(WIFI_STA);
 	Serial.begin(115200);
-	setCpuFrequencyMhz(80);
-
-	// Prepare pins
-	pinMode(directionalPinA, OUTPUT);
-	pinMode(directionalPinB, OUTPUT);
-	pinMode(externalButton, INPUT);
-	ledcSetup(LED.getChannel(), LED.getFrequency(), LED.getResolution());
-	ledcAttachPin(LED_BUILTIN, LED.getChannel());
-
-	// WiFi Manager config
-	// wm.setConfigPortalTimeout(3600);
-	// wm.setDarkMode(true);
-	// wm.setConfigPortalBlocking(false);
-	// wm.setHostname("Winderoo");
-	// wm.setSaveConfigCallback(saveWifiCallback);
-
 	userDefinedSettings.winderEnabled = true;
+	initFS();
 
-	// Connect using saved credentials, if they exist
-	// If connection fails, start setup Access Point
-	// if (wm.autoConnect("Winderoo Setup"))
-	// {
-		initFS();
+	// retrieve & read saved settings
+	String savedSettings = loadConfigVarsFromFile(settingsFile);
+	parseSettings(savedSettings);
 
-		// retrieve & read saved settings
-		String savedSettings = loadConfigVarsFromFile(settingsFile);
-		parseSettings(savedSettings);
+	Node winder_node = RMaker.initNode("Winderoo Device");
 
-		MDNS.begin("winderoo");
-		// MDNS.addService("_winderoo", "_tcp", 80);
+	// Expose functionality & define interface types for Rainmaker UI
+	Param rpdParam("Rotations Per Day", ESP_RMAKER_PARAM_RANGE,  value((int)userDefinedSettings.rotationsPerDay.toInt()), PROP_FLAG_READ | PROP_FLAG_WRITE);
+	rpdParam.addUIType(ESP_RMAKER_UI_SLIDER);
+	rpdParam.addBounds(value(100), value(960), value(20));
+	Winderoo.addParam(rpdParam);
 
-		if (strcmp(userDefinedSettings.status.c_str(), "Winding") == 0)
-		{
-			beginWindingRoutine();
-		}
+	static const char* directionalModes[] = { "CW", "BOTH", "CCW" };
+	Param modeDirection("Direction", ESP_RMAKER_UI_DROPDOWN, value(userDefinedSettings.direction.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
+	modeDirection.addValidStrList(directionalModes, 3);
+	modeDirection.addUIType(ESP_RMAKER_UI_DROPDOWN);
+	Winderoo.addParam(modeDirection);
 
-		Node winder_node = RMaker.initNode("Winderoo Device");
-		// Expose functionality & define interface types for Rainmaker UI
-		Param rpdParam("Rotations Per Day", ESP_RMAKER_PARAM_RANGE, value((int)userDefinedSettings.rotationsPerDay.toInt()), PROP_FLAG_READ | PROP_FLAG_WRITE);
-		rpdParam.addUIType(ESP_RMAKER_UI_SLIDER);
-		rpdParam.addBounds(value(100), value((int)userDefinedSettings.rotationsPerDay.toInt()), value(960));
-		Winderoo.addParam(rpdParam);
+	Winderoo.addCb(write_callback);
+	winder_node.addDevice(Winderoo);
 
-		const char* directionalModes[] = { "CW", "BOTH", "CCW" };
-		Param modeDirection("Direction", "custom.param.direction", value((char*)userDefinedSettings.direction.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
-		modeDirection.addValidStrList(directionalModes, 3);
-		modeDirection.addUIType(ESP_RMAKER_UI_DROPDOWN);
-		Winderoo.addParam(modeDirection);
+	RMaker.enableSchedule();
+	RMaker.enableScenes();
+	RMaker.start();
 
-		Param toggleStartStop("Control", "custom.param.toggle", value((char*)userDefinedSettings.status.c_str()), PROP_FLAG_READ | PROP_FLAG_WRITE);
-		toggleStartStop.addUIType(ESP_RMAKER_UI_TOGGLE);
-		Winderoo.addParam(toggleStartStop);
-		Winderoo.assignPrimaryParam(Winderoo.getParamByName("Control"));
+	WiFi.onEvent(sysProvEvent);
+	WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_1, pop, service_name);
 
-		Winderoo.addCb(write_callback);
-		winder_node.addDevice(Winderoo);
+	delay(3000);
+	getTime();
+	startWebserver();
 
-		RMaker.enableSchedule();
-		RMaker.enableScenes();
-		RMaker.start();
 
-		WiFi.onEvent(sysProvEvent);
+	if (strcmp(userDefinedSettings.status.c_str(), "Winding") == 0)
+	{
+		beginWindingRoutine();
+	}
 
-	
- 		if (CONFIG_IDF_TARGET_ESP32) {
-			WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE, WIFI_PROV_SCHEME_HANDLER_FREE_BTDM, WIFI_PROV_SECURITY_1, pop, service_name);
-		} else {
-			WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_1, pop, service_name);
-		}
-		// getTime();
-		// startWebserver();
-
-	// }
-	// else
-	// {
-		ledcWrite(LED.getChannel(), 255);
-	// };
 }
 
 void loop()
@@ -626,7 +552,7 @@ void loop()
 	if (reset)
 	{
 		// fast blink
-		triggerLEDCondition(2);
+		// triggerLEDCondition(2);
 
 		// server.end();
 		delay(600);
@@ -706,7 +632,7 @@ void loop()
 
 	if (userDefinedSettings.winderEnabled == "0")
 	{
-		triggerLEDCondition(3);
+		// triggerLEDCondition(3);
 	}
 
 	// wm.process();
