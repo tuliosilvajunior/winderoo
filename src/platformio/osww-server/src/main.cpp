@@ -2,9 +2,10 @@
 #include <WiFiManager.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
-#include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <ESP32Time.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 
 #ifdef OLED_ENABLED
 	#include <SPI.h>
@@ -49,9 +50,9 @@ int SCREEN_HEIGHT = 64; // OLED display height, in pixels
 int OLED_RESET = -1; // Reset pin number (or -1 if sharing Arduino reset pin)
 
 // Home Assistant Configuration
-const char* HOME_ASSISTANT_BROKER_IP = "YOUR_HOME_ASSISTANT_IP";
-const char* HOME_ASSISTANT_USERNAME = "YOUR_HOME_ASSISTANT_LOGIN_USERNAME";
-const char* HOME_ASSISTANT_PASSWORD = "YOUR_HOME_ASSISTANT_LOGIN_PASSWORD";
+const char* HOME_ASSISTANT_BROKER_IP = "192.168.1.251";
+const char* HOME_ASSISTANT_USERNAME = "tulio";
+const char* HOME_ASSISTANT_PASSWORD = "fyt202729";
 /*
  * *************************************************************************************
  * ******************************* END CONFIGURABLES ***********************************
@@ -61,7 +62,6 @@ const char* HOME_ASSISTANT_PASSWORD = "YOUR_HOME_ASSISTANT_LOGIN_PASSWORD";
 /*
  * DO NOT CHANGE THESE VARIABLES!
  */
-String timeURL = "http://worldtimeapi.org/api/ip";
 String settingsFile = "/settings.json";
 unsigned long rtc_offset;
 unsigned long rtc_epoch;
@@ -91,9 +91,10 @@ RUNTIME_VARS userDefinedSettings;
 LedControl LED(ledPin);
 WiFiManager wm;
 AsyncWebServer server(80);
-HTTPClient http;
 WiFiClient client;
 ESP32Time rtc;
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "192.168.1.246"); // Replace with your local NTP server IP
 String winderooVersion = "3.0.0";
 
 #if PWM_MOTOR_CONTROL
@@ -411,35 +412,27 @@ void beginWindingRoutine()
 /**
  * Calls external time API & updates ESP32's onboard real time clock
  */
-void getTime()
-{
-	http.begin(client, timeURL);
-	int httpCode = http.GET();
-
-	if (httpCode > 0)
-	{
-		JsonDocument json;
-		deserializeJson(json, http.getStream());
-		const String datetime = json["datetime"];
-
-		String date = datetime.substring(0, datetime.indexOf("T") - 1);
-		int day = date.substring(8, 10).toInt();
-		int month = date.substring(5, 7).toInt();
-		int year = date.substring(0, 4).toInt();
-
-		String time = datetime.substring(datetime.indexOf("T") + 1);
-		int seconds = time.substring(6, 8).toInt();
-		int hours = time.substring(0, 2).toInt();
-		int minutes = time.substring(3, 5).toInt();
-
-		rtc.setTime(seconds, minutes, hours, day, month, year);
-	}
-	else
-	{
-		Serial.println("[ERROR] - Failed to get time from Worldtime API");
-	}
-
-	http.end();
+void getTime() {
+    timeClient.begin();
+    timeClient.update();
+    
+    time_t epochTime = timeClient.getEpochTime();
+    struct tm *ptm = gmtime ((time_t *)&epochTime);
+    
+    int currentYear = ptm->tm_year + 1900;
+    int currentMonth = ptm->tm_mon + 1;
+    int currentDay = ptm->tm_mday;
+    int currentHour = timeClient.getHours();
+    int currentMinute = timeClient.getMinutes();
+    int currentSecond = timeClient.getSeconds();
+    
+    Serial.printf("[STATUS] - Date: %d-%02d-%02d Time: %02d:%02d:%02d\n", 
+        currentYear, currentMonth, currentDay,
+        currentHour, currentMinute, currentSecond);
+    
+    rtc.setTime(currentSecond, currentMinute, currentHour, currentDay, currentMonth, currentYear);
+    
+    timeClient.end();
 }
 
 /**
@@ -601,7 +594,7 @@ void startWebserver()
 				return;
 			}
 
-			if (!json.containsKey("winderEnabled"))
+			if (!json["winderEnabled"].is<bool>())
 			{
 				request->send(400, "text/plain", "Missing required field: 'winderEnabled'");
 			}
@@ -648,7 +641,7 @@ void startWebserver()
 			// validate request body
 				for (int i = 0; i < arraySize; i++)
 				{
-					if(!json.containsKey(requiredKeys[i]))
+					if(!json[requiredKeys[i]].is<JsonVariant>())
 					{
 						request->send(400, "text/plain", "Missing required field: '" + requiredKeys[i] +"'");
 					}
@@ -1152,6 +1145,9 @@ void setup()
 	Serial.begin(115200);
 	setCpuFrequencyMhz(160);
 
+	// Timezone Brazil, Sao_Paulo
+	timeClient.setTimeOffset(-10800);  // GMT-3 offset in seconds (-3 * 60 * 60)
+
 	// Prepare pins
 	pinMode(directionalPinA, OUTPUT);
 	pinMode(directionalPinB, OUTPUT);
@@ -1198,7 +1194,7 @@ void setup()
 
 		// retrieve & read saved settings
 		loadConfigVarsFromFile(settingsFile);
-
+		
 		if (!MDNS.begin("winderoo"))
 		{
 			Serial.println("[STATUS] - Failed to start mDNS");
