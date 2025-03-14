@@ -4,14 +4,14 @@
         "ON": "on",
         "OFF": "off",
         "DIALOG": {
-            "TITLE": "O Reset irá demorar 20 segundos",
-            "SUBTITLE": "O display OLED não irá apagar durante o processo de Reset",
+            "TITLE": "O Reset irá demorar aproximadamente 20 segundos",
+            "SUBTITLE": "Este display não irá desligar durante o processo de Reset",
             "CANCEL": "Cancelar",
-            "POINT_1": "O Reset estará concluído quando o segundo LED parar de piscar rapidamente e fica sempre ligado.",
-            "POINT_2": "Conectec o seu dispositivo móvel à nova rede WiFi com o nome",
-            "POINT_3": "Adicione Winderoo a uma rede WiFi existente. Se o LED começar a piscar lentamente, o Winderoo ja se conectou a essa rede com sucesso.",
+            "POINT_1": "O Reset está concluído quando o segundo LED parar de piscar rapidamente e fica sempre aceso.",
+            "POINT_2": "Ligue o seu dispositivo móvel à rede WiFi com o nome",
+            "POINT_3": "Adicione Winderoo a uma rede WiFi existente. Se o LED começar a piscar lentamente, o Winderoo conseguiu se conectar a essa rede com sucesso.",
             "POINT_4": "Aguarde que o seu dispositivo se reconecte à sua rede WiFi existente.",
-            "NOW_AVAILABLE": "O Winderoo agora está disponível em:",
+            "NOW_AVAILABLE": "O Winderoo já disponível em:",
             "CONFIRM_RESET": "Confirmar Reset"
         }
     },
@@ -29,12 +29,12 @@
         "HOURS": "Horas",
         "MINUTES": "Minutos",
         "SAVE": "Salvar Configurações",
-        "SAVE_IN_PROGRESS": "Salvando as Configurações",
+        "SAVE_IN_PROGRESS": "Upload em andamento",
         "CLOCKWISE": "Sentido horário",
         "COUNTER_CLOCKWISE": "Sentido Anti-horário",
         "BOTH": "Ambos os sentidos",
-        "PLEASE_WAIT": "Obtendo o progresso do ciclo, por favor aguarde",
+        "PLEASE_WAIT": "Procurando o progresso do ciclo, por favor aguarde",
         "PROGRESS": "Progresso do Ciclo",
-        "SCREEN": "Ecrã OLED"
+        "SCREEN": "Display OLED"
     }
 }
